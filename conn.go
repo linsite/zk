@@ -225,6 +225,19 @@ func Connect(servers []string, sessionTimeout time.Duration, options ...connOpti
 	return conn, ec, nil
 }
 
+// WithAuthData returns a connection option specifying a AuthData
+func WithAuthData(scheme string, auth []byte) connOption {
+	return func(c *Conn) {
+		obj := authCreds{
+			scheme: scheme,
+			auth:   auth,
+		}
+		c.credsMu.Lock()
+		c.creds = append(c.creds, obj)
+		c.credsMu.Unlock()
+	}
+}
+
 // WithDialer returns a connection option specifying a non-default Dialer.
 func WithDialer(dialer Dialer) connOption {
 	return func(c *Conn) {
