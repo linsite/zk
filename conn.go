@@ -73,6 +73,7 @@ type Conn struct {
 	xid              uint32
 	sessionTimeoutMs int32 // session timeout in milliseconds
 	passwd           []byte
+	readOnly         bool
 
 	dialer         Dialer
 	hostProvider   HostProvider
@@ -242,6 +243,13 @@ func WithAuthData(scheme string, auth []byte) connOption {
 func WithDialer(dialer Dialer) connOption {
 	return func(c *Conn) {
 		c.dialer = dialer
+	}
+}
+
+// WithReadOnly returns a connection option specifying allow connecting to read-only zk.
+func WithReadOnly() connOption {
+	return func(c *Conn) {
+		c.readOnly = true
 	}
 }
 
@@ -681,6 +689,7 @@ func (c *Conn) authenticate() error {
 		TimeOut:         c.sessionTimeoutMs,
 		SessionID:       c.SessionID(),
 		Passwd:          c.passwd,
+		ReadOnly:        c.readOnly,
 	})
 	if err != nil {
 		return err
@@ -729,7 +738,11 @@ func (c *Conn) authenticate() error {
 	atomic.StoreInt64(&c.sessionID, r.SessionID)
 	c.setTimeouts(r.TimeOut)
 	c.passwd = r.Passwd
-	c.setState(StateHasSession)
+	if r.ReadOnly {
+		c.setState(StateConnectedReadOnly)
+	} else {
+		c.setState(StateHasSession)
+	}
 
 	return nil
 }
