@@ -236,6 +236,24 @@ func FLWCons(servers []string, timeout time.Duration) ([]*ServerClients, bool) {
 	return sc, imOk
 }
 
+
+// FLWIsRW is a FourLetterWord helper function. In particular, this function
+// pulls isro of a server.
+func FLWIsRW(server string, timeout time.Duration) bool {
+	servers := FormatServers([]string{server})
+	response, err := fourLetterWord(servers[0], "isro", timeout)
+
+	if err != nil {
+		return false
+	}
+
+	if bytes.Equal(response[:4], []byte("rw")) {
+		return true
+	}
+
+	return false
+}
+
 // parseInt64 is similar to strconv.ParseInt, but it also handles hex values that represent negative numbers
 func parseInt64(s string) (int64, error) {
 	if strings.HasPrefix(s, "0x") {

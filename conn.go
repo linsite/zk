@@ -73,6 +73,7 @@ type Conn struct {
 	xid              uint32
 	sessionTimeoutMs int32 // session timeout in milliseconds
 	passwd           []byte
+	readOnly         bool
 
 	dialer         Dialer
 	hostProvider   HostProvider
@@ -242,6 +243,13 @@ func WithAuthData(scheme string, auth []byte) connOption {
 func WithDialer(dialer Dialer) connOption {
 	return func(c *Conn) {
 		c.dialer = dialer
+	}
+}
+
+// WithAllowReadOnly returns a connection option specifying allow connecting to read-only zk.
+func WithAllowReadOnly(allow bool) connOption {
+	return func(c *Conn) {
+		c.readOnly = allow
 	}
 }
 
@@ -467,6 +475,7 @@ func (c *Conn) sendRequest(
 }
 
 func (c *Conn) loop(ctx context.Context) {
+	go c.pingForRW()
 	for {
 		if err := c.connect(); err != nil {
 			// c.Close() was called
@@ -681,6 +690,7 @@ func (c *Conn) authenticate() error {
 		TimeOut:         c.sessionTimeoutMs,
 		SessionID:       c.SessionID(),
 		Passwd:          c.passwd,
+		ReadOnly:        c.readOnly,
 	})
 	if err != nil {
 		return err
@@ -729,9 +739,54 @@ func (c *Conn) authenticate() error {
 	atomic.StoreInt64(&c.sessionID, r.SessionID)
 	c.setTimeouts(r.TimeOut)
 	c.passwd = r.Passwd
-	c.setState(StateHasSession)
+	if r.ReadOnly {
+		c.setState(StateConnectedReadOnly)
+	} else {
+		c.setState(StateHasSession)
+	}
 
 	return nil
+}
+
+
+func (c *Conn) pingForRW() {
+	c.logger.Printf("Start to ping for RW server.")
+	for {
+		select {
+		case <-c.shouldQuit:
+			c.logger.Printf("Should quit.")
+			return
+		default:
+		}
+		if c.State() == StateConnectedReadOnly {
+			if c.logInfo {
+				c.logger.Printf("Try to find a RW server.")
+			}
+			server, _ := c.hostProvider.Next()
+			if FLWIsRW(server, 2*time.Second) {
+				// note(linsite)
+				// We cannot close closeChan which will trigger a double-close panic.
+				// Only send an item a time, which may not be enough as there are more than 1 consumer of closeChan.
+				// But that's OK, because we are in a loop.
+				func() {
+					// Catch closed panic.
+					defer func() {
+						_ = recover()
+					}()
+					c.closeChan <- struct{}{}
+				}()
+				time.Sleep(1 * time.Second)
+				continue
+			} else {
+				// Mark current connectec, so that hostProvider can find a RW server faster.
+				c.hostProvider.Connected()
+			}
+			// loop faster to reconnected to RW server.
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func (c *Conn) sendData(req *request) error {
